@@ -5,6 +5,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  DEFAULT_MODEL,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -264,6 +265,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        model: group.model || DEFAULT_MODEL,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,

@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  model?: string;
 }
 
 interface ContainerOutput {
@@ -432,6 +433,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      model: containerInput.model,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -449,7 +451,8 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*',
         'mcp__gmail__*',
-        'mcp__google-calendar__*'
+        'mcp__google-calendar__*',
+        'mcp__google-docs__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -476,6 +479,10 @@ async function runQuery(
             GOOGLE_OAUTH_CREDENTIALS: '/home/node/.gmail-mcp/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp/tokens.json',
           },
+        },
+        'google-docs': {
+          command: 'node',
+          args: ['/home/node/google-docs-mcp/build/index.js'],
         },
       },
       hooks: {

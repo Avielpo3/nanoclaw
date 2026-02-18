@@ -32,6 +32,10 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Install stealth-browser (Playwright with anti-detection for bot-protected sites)
+COPY skills/agent-browser/stealth-browser.mjs /usr/local/lib/stealth-browser.mjs
+RUN ln -s /usr/local/lib/stealth-browser.mjs /usr/local/bin/stealth-browser && chmod +x /usr/local/lib/stealth-browser.mjs
+
 # Create app directory
 WORKDIR /app
 

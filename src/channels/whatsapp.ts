@@ -166,16 +166,79 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
+          // Extract text content from all known message types
+          // Forwarded messages may be wrapped in contextInfo but use the same fields
+          const m = msg.message || {};
           let content =
-            msg.message?.conversation ||
-            msg.message?.extendedTextMessage?.text ||
-            msg.message?.imageMessage?.caption ||
-            msg.message?.videoMessage?.caption ||
+            m.conversation ||
+            m.extendedTextMessage?.text ||
+            m.imageMessage?.caption ||
+            m.videoMessage?.caption ||
+            m.documentMessage?.caption ||
+            m.documentWithCaptionMessage?.message?.documentMessage?.caption ||
+            m.listResponseMessage?.title ||
+            m.buttonsResponseMessage?.selectedDisplayText ||
+            m.templateButtonReplyMessage?.selectedDisplayText ||
             '';
 
+          // Handle ephemeral (disappearing) messages — content is nested one level deeper
+          if (!content && m.ephemeralMessage?.message) {
+            const em = m.ephemeralMessage.message;
+            content =
+              em.conversation ||
+              em.extendedTextMessage?.text ||
+              em.imageMessage?.caption ||
+              em.videoMessage?.caption ||
+              em.documentMessage?.caption ||
+              '';
+          }
+
+          // Handle viewOnce messages
+          if (!content && (m.viewOnceMessage?.message || m.viewOnceMessageV2?.message)) {
+            const vom = m.viewOnceMessage?.message || m.viewOnceMessageV2?.message || {};
+            content =
+              vom.imageMessage?.caption ||
+              vom.videoMessage?.caption ||
+              '';
+          }
+
+          // Tag forwarded messages so the agent knows the context
+          const ephMsg = m.ephemeralMessage?.message;
+          const contextInfo =
+            m.extendedTextMessage?.contextInfo ||
+            m.imageMessage?.contextInfo ||
+            m.videoMessage?.contextInfo ||
+            m.documentMessage?.contextInfo ||
+            m.audioMessage?.contextInfo ||
+            ephMsg?.extendedTextMessage?.contextInfo ||
+            ephMsg?.imageMessage?.contextInfo ||
+            ephMsg?.documentMessage?.contextInfo ||
+            null;
+          const isForwarded = contextInfo?.isForwarded || (contextInfo?.forwardingScore ?? 0) > 0;
+          if (isForwarded && content) {
+            content = `[Forwarded message]\n${content}`;
+          }
+
           // Handle voice messages (ptt = push-to-talk)
-          if (msg.message?.audioMessage?.ptt) {
+          if (m.audioMessage?.ptt || m.ephemeralMessage?.message?.audioMessage?.ptt) {
             content = await this.transcribeVoiceMessage(msg);
+          }
+
+          // Handle media messages (images, documents) — download and describe
+          // This catches forwarded images/docs that have no caption
+          const mediaMsg = m.imageMessage || m.documentMessage
+            || m.documentWithCaptionMessage?.message?.documentMessage
+            || m.ephemeralMessage?.message?.imageMessage
+            || m.ephemeralMessage?.message?.documentMessage
+            || m.viewOnceMessage?.message?.imageMessage
+            || m.viewOnceMessageV2?.message?.imageMessage
+            || null;
+
+          if (mediaMsg && !content) {
+            // Save media to the group's folder so it's accessible inside the container
+            // at /workspace/group/media/
+            const groupFolder = groups[chatJid]?.folder;
+            content = await this.extractMediaContent(msg, mediaMsg, isForwarded, groupFolder);
           }
 
           const sender = msg.key.participant || msg.key.remoteJid || '';
@@ -295,6 +358,66 @@ export class WhatsAppChannel implements Channel {
     }
 
     return jid;
+  }
+
+  private async extractMediaContent(msg: any, mediaMsg: any, isForwarded: boolean, groupFolder?: string): Promise<string> {
+    const mimetype = mediaMsg.mimetype || '';
+    const fileName = mediaMsg.fileName || '';
+    const isImage = mimetype.startsWith('image/');
+    const isDocument = mimetype.startsWith('application/') || mimetype.startsWith('text/');
+    const prefix = isForwarded ? '[Forwarded message]\n' : '';
+
+    // Save media to the group's folder so it's accessible inside the container
+    // at /workspace/group/media/ (groups/{folder}/ is mounted as /workspace/group/)
+    let mediaDir = '/tmp';
+    let containerMediaDir = '/tmp';
+    if (groupFolder) {
+      const { GROUPS_DIR } = await import('../config.js');
+      mediaDir = path.join(GROUPS_DIR, groupFolder, 'media');
+      containerMediaDir = '/workspace/group/media';
+      fs.mkdirSync(mediaDir, { recursive: true });
+    }
+
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+        logger,
+        reuploadRequest: this.sock.updateMediaMessage,
+      });
+
+      if (isImage) {
+        const ext = mimetype.includes('png') ? 'png' : 'jpg';
+        const imgFile = `${msg.key.id}.${ext}`;
+        const imgPath = path.join(mediaDir, imgFile);
+        fs.writeFileSync(imgPath, buffer);
+        const containerPath = `${containerMediaDir}/${imgFile}`;
+        logger.info({ msgId: msg.key.id, path: imgPath, size: buffer.length }, 'Image saved for agent');
+        return `${prefix}[Image: ${containerPath}]`;
+      }
+
+      if (isDocument) {
+        const ext = fileName.split('.').pop() || 'bin';
+        const docFile = `${msg.key.id}.${ext}`;
+        const docPath = path.join(mediaDir, docFile);
+        fs.writeFileSync(docPath, buffer);
+
+        // Try to extract text from text-based documents
+        if (mimetype.includes('text') || ['txt', 'csv', 'json', 'html', 'xml', 'md'].includes(ext)) {
+          const text = buffer.toString('utf-8').slice(0, 5000);
+          logger.info({ msgId: msg.key.id, chars: text.length }, 'Text document extracted');
+          return `${prefix}[Document: ${fileName}]\n${text}`;
+        }
+
+        const containerDocPath = `${containerMediaDir}/${docFile}`;
+        logger.info({ msgId: msg.key.id, path: docPath, fileName, mimetype }, 'Document saved for agent');
+        return `${prefix}[Document: ${fileName} (${mimetype}), saved to ${containerDocPath}]`;
+      }
+
+      // Unknown media type — describe what we got
+      return `${prefix}[Media: ${mimetype}${fileName ? `, ${fileName}` : ''}]`;
+    } catch (err) {
+      logger.error({ err, msgId: msg.key.id, mimetype }, 'Failed to download media');
+      return `${prefix}[Media: ${mimetype}${fileName ? `, ${fileName}` : ''} — download failed]`;
+    }
   }
 
   private async transcribeVoiceMessage(msg: any): Promise<string> {

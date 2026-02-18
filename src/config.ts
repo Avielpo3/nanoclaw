@@ -55,5 +55,7 @@ export const TRIGGER_PATTERN = new RegExp(
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
+export const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'claude-sonnet-4-6';
+
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;

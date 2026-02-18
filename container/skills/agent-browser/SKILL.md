@@ -6,6 +6,52 @@ allowed-tools: Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
+## Timeouts — CRITICAL
+
+agent-browser has NO built-in timeout. Heavy sites WILL hang forever and kill your session.
+
+**ALWAYS wrap commands with `timeout`:**
+
+```bash
+timeout 30 agent-browser open <url>        # 30s to load a page
+timeout 15 agent-browser snapshot -i       # 15s for snapshot
+timeout 10 agent-browser click @e1         # 10s for clicks
+timeout 10 agent-browser fill @e2 "text"   # 10s for fill
+timeout 20 agent-browser wait --load networkidle  # 20s for network idle
+```
+
+**If a command times out (exit code 124):**
+1. Run `timeout 5 agent-browser close` to kill the browser
+2. Try alternative approach: mobile site, `WebFetch`, or different URL
+3. If the same site hangs twice, stop trying — give user the direct link and phone number
+
+## stealth-browser — For Bot-Protected Sites
+
+When `agent-browser` gets blocked (403, CloudFront, Captcha challenge), use `stealth-browser` instead. It uses Playwright with anti-detection (masks webdriver, real User-Agent, Chrome runtime spoofing).
+
+```bash
+timeout 30 stealth-browser open <url>              # Open URL, print status/title
+timeout 30 stealth-browser snapshot <url>           # Open URL, list interactive elements
+timeout 30 stealth-browser screenshot <url> [path]  # Take screenshot
+timeout 30 stealth-browser html <url>               # Get full page HTML
+timeout 60 stealth-browser script <path.mjs>        # Run custom Playwright script
+```
+
+**When to use which:**
+- `agent-browser` — default for most sites, supports refs/click/fill workflow
+- `stealth-browser` — when agent-browser gets 403/blocked, or for Tabit, CloudFront-protected sites
+
+**Custom scripts** (`stealth-browser script`): write a `.mjs` file that exports a default async function receiving `{ browser, context, page }`. Use this for multi-step flows like reservations on protected sites.
+
+## Blocked Sites — DO NOT OPEN
+
+These sites are too heavy and WILL freeze the browser indefinitely:
+- **Google Maps** (maps.google.com, google.com/maps) — use `WebSearch` or `WebFetch` instead
+- **Google Search** (google.com/search) — use `WebSearch` tool instead
+- **Waze** (waze.com) — use `WebFetch` instead
+
+For distances/directions, ALWAYS use `WebSearch "distance from A to B"` or `WebFetch` on a Google Maps URL. Never open these in agent-browser.
+
 ## Quick start
 
 ```bash
@@ -18,10 +64,11 @@ agent-browser close             # Close browser
 
 ## Core workflow
 
-1. Navigate: `agent-browser open <url>`
-2. Snapshot: `agent-browser snapshot -i` (returns elements with refs like `@e1`, `@e2`)
-3. Interact using refs from the snapshot
+1. Navigate: `timeout 30 agent-browser open <url>`
+2. Snapshot: `timeout 15 agent-browser snapshot -i` (returns elements with refs like `@e1`, `@e2`)
+3. Interact using refs from the snapshot (always with `timeout`)
 4. Re-snapshot after navigation or significant DOM changes
+5. If any step returns exit 124, close and try a different approach
 
 ## Commands
 

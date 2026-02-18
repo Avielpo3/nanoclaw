@@ -42,6 +42,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  model?: string;
 }
 
 export interface ContainerOutput {
@@ -116,6 +117,16 @@ function buildVolumeMounts(
       hostPath: calendarDir,
       containerPath: '/home/node/.config/google-calendar-mcp',
       readonly: false,
+    });
+  }
+
+  // Google Docs MCP (local project — pure JS, cross-platform safe)
+  const googleDocsMcpDir = path.join(homeDir, 'personal-writing', 'google-docs-mcp');
+  if (fs.existsSync(googleDocsMcpDir)) {
+    mounts.push({
+      hostPath: googleDocsMcpDir,
+      containerPath: '/home/node/google-docs-mcp',
+      readonly: false,  // needs write for token refresh
     });
   }
 
@@ -233,8 +244,13 @@ function readSecrets(): Record<string, string> {
   return secrets;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName: string, memoryMb?: number): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Set container memory (subagents + browser need more than the 1GB default)
+  if (memoryMb) {
+    args.push('--memory', `${memoryMb}MB`);
+  }
 
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
@@ -267,12 +283,16 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  // Main group gets more memory for subagents + browser; others get 2GB
+  const defaultMemory = input.isMain ? 4096 : 2048;
+  const memoryMb = group.containerConfig?.memory || defaultMemory;
+  const containerArgs = buildContainerArgs(mounts, containerName, memoryMb);
 
   logger.debug(
     {
       group: group.name,
       containerName,
+      memoryMb,
       mounts: mounts.map(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
