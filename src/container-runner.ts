@@ -2,12 +2,13 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in Apple Container and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import {
+  CONTAINER_FIRST_OUTPUT_TIMEOUT,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -105,6 +106,16 @@ function buildVolumeMounts(
       hostPath: gmailDir,
       containerPath: '/home/node/.gmail-mcp',
       readonly: false,  // MCP may need to refresh tokens
+    });
+  }
+
+  // Google Calendar tokens directory
+  const calendarDir = path.join(homeDir, '.config', 'google-calendar-mcp');
+  if (fs.existsSync(calendarDir)) {
+    mounts.push({
+      hostPath: calendarDir,
+      containerPath: '/home/node/.config/google-calendar-mcp',
+      readonly: false,
     });
   }
 
@@ -366,8 +377,6 @@ export async function runContainerAgent(
       for (const line of lines) {
         if (line) logger.debug({ container: group.folder }, line);
       }
-      // Don't reset timeout on stderr — SDK writes debug logs continuously.
-      // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
       if (chunk.length > remaining) {
@@ -384,32 +393,81 @@ export async function runContainerAgent(
 
     let timedOut = false;
     let hadStreamingOutput = false;
+    let containerExited = false;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
-    const killOnTimeout = () => {
+    const killContainer = (reason: string) => {
+      if (containerExited) return;
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
+      logger.error({ group: group.name, containerName, reason }, 'Killing container');
+      // Kill the process directly — 'container stop' can hang indefinitely
+      container.kill('SIGTERM');
+      // Force kill after 5s if SIGTERM didn't work
+      setTimeout(() => {
+        if (!containerExited) {
+          logger.warn({ group: group.name, containerName }, 'SIGTERM failed, sending SIGKILL');
           container.kill('SIGKILL');
         }
-      });
+      }, 5000);
     };
 
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
+    let timeout = setTimeout(() => killContainer('hard timeout'), timeoutMs);
 
-    // Reset the timeout whenever there's activity (streaming output)
+    // Reset hard timeout whenever there's streaming output
     const resetTimeout = () => {
       clearTimeout(timeout);
-      timeout = setTimeout(killOnTimeout, timeoutMs);
+      timeout = setTimeout(() => killContainer('hard timeout'), timeoutMs);
     };
 
+    // Healthcheck: ping the container via IPC and wait for ack.
+    // If the agent-runner is alive (even if busy), it responds within seconds.
+    // If it's truly stuck (hung process), no ack arrives and we kill it.
+    const ipcInputDir = path.join(DATA_DIR, 'ipc', group.folder, 'input');
+    const healthcheckFile = path.join(ipcInputDir, '_healthcheck');
+    const healthcheckAckFile = path.join(ipcInputDir, '_healthcheck_ack');
+    let missedHealthchecks = 0;
+    const MAX_MISSED_HEALTHCHECKS = 3;
+    const HEALTHCHECK_INTERVAL_MS = CONTAINER_FIRST_OUTPUT_TIMEOUT / MAX_MISSED_HEALTHCHECKS;
+
+    const healthcheckInterval = setInterval(() => {
+      if (containerExited) return;
+
+      // Check if previous healthcheck was acked
+      try {
+        if (fs.existsSync(healthcheckAckFile)) {
+          fs.unlinkSync(healthcheckAckFile);
+          missedHealthchecks = 0;
+        } else if (fs.existsSync(healthcheckFile)) {
+          // Previous ping still sitting there, not consumed
+          missedHealthchecks++;
+        } else {
+          // No ping file and no ack — first check or ack already cleaned up
+          // Don't increment missed count on first check
+        }
+      } catch { /* ignore fs errors */ }
+
+      if (missedHealthchecks >= MAX_MISSED_HEALTHCHECKS) {
+        killContainer(`stuck — missed ${missedHealthchecks} healthchecks`);
+        return;
+      }
+
+      // Send new ping
+      try {
+        fs.mkdirSync(ipcInputDir, { recursive: true });
+        fs.writeFileSync(healthcheckFile, String(Date.now()));
+      } catch { /* ignore */ }
+    }, HEALTHCHECK_INTERVAL_MS);
+
     container.on('close', (code) => {
+      containerExited = true;
       clearTimeout(timeout);
+      clearInterval(healthcheckInterval);
+      // Clean up healthcheck files
+      try { fs.unlinkSync(healthcheckFile); } catch { /* ignore */ }
+      try { fs.unlinkSync(healthcheckAckFile); } catch { /* ignore */ }
       const duration = Date.now() - startTime;
 
       if (timedOut) {
@@ -601,6 +659,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      clearInterval(healthcheckInterval);
       logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',

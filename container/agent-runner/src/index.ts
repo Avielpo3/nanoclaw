@@ -56,6 +56,8 @@ interface SDKUserMessage {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
+const IPC_HEALTHCHECK_FILE = path.join(IPC_INPUT_DIR, '_healthcheck');
+const IPC_HEALTHCHECK_ACK_FILE = path.join(IPC_INPUT_DIR, '_healthcheck_ack');
 const IPC_POLL_MS = 500;
 
 /**
@@ -283,9 +285,23 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
 }
 
 /**
+ * Respond to healthcheck pings from the host.
+ * Host writes _healthcheck, we respond with _healthcheck_ack.
+ */
+function respondToHealthcheck(): void {
+  try {
+    if (fs.existsSync(IPC_HEALTHCHECK_FILE)) {
+      fs.unlinkSync(IPC_HEALTHCHECK_FILE);
+      fs.writeFileSync(IPC_HEALTHCHECK_ACK_FILE, String(Date.now()));
+    }
+  } catch { /* ignore */ }
+}
+
+/**
  * Check for _close sentinel.
  */
 function shouldClose(): boolean {
+  respondToHealthcheck();
   if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
     try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
     return true;
@@ -432,7 +448,8 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__gmail__*'
+        'mcp__gmail__*',
+        'mcp__google-calendar__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -451,6 +468,14 @@ async function runQuery(
         gmail: {
           command: 'npx',
           args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+        },
+        'google-calendar': {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.gmail-mcp/gcp-oauth.keys.json',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp/tokens.json',
+          },
         },
       },
       hooks: {
