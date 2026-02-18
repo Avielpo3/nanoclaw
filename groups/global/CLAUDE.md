@@ -40,12 +40,46 @@ Files you create are saved in `/workspace/group/`. Use this for notes, research,
 
 ## Memory
 
-The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
+You have a persistent memory system. Use it to build knowledge about the user over time.
 
-When you learn something important:
-- Create files for structured data (e.g., `customers.md`, `preferences.md`)
-- Split files larger than 500 lines into folders
-- Keep an index in your memory for the files you create
+### Memory Files
+
+Your memory lives in `memory/` inside your workspace (`/workspace/group/memory/`):
+
+- `memory/persona.md` — Who the user is: name, role, personality, communication style
+- `memory/preferences.md` — Likes, dislikes, tools, workflows, habits
+- `memory/facts.md` — People, places, projects, concrete details
+- `memory/events.md` — Timeline of events/decisions, one per line: `YYYY-MM-DD: description`
+
+Create these files on first use. Keep each under 500 lines; split into subfolders if they grow.
+
+### When to Save Memories
+
+*After every response*, before you finish, ask yourself: "Did I learn anything new about the user?" If yes, save it to the right file.
+
+- Persona traits (how they communicate, what they care about) -> `memory/persona.md`
+- Preferences (tools, foods, styles, opinions) -> `memory/preferences.md`
+- Facts (people they know, where they work, projects) -> `memory/facts.md`
+- Events and decisions (meetings, choices, milestones) -> `memory/events.md`
+
+Before writing, read the target file to avoid duplicates. If a fact changed, update the existing line.
+
+When the user says "remember this" or similar, save immediately and confirm.
+
+### When to Read Memories
+
+When a message might relate to something you learned before, read the relevant memory file *before* responding. Examples:
+
+- User asks about a person -> read `memory/facts.md`
+- User references a past decision -> read `memory/events.md`
+- User asks you to do something "the way I like" -> read `memory/preferences.md`
+- Ambiguous request that needs context -> check relevant memory files
+
+Do NOT load all memory files at once. Read only what you need to keep context small.
+
+### Conversations Archive
+
+The `conversations/` folder contains searchable history of past conversations. Use this to recall specific details from previous sessions when memory files don't have what you need.
 
 ## Message Formatting
 

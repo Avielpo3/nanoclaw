@@ -16,7 +16,9 @@ groups/*
 groups/main/*
 groups/global/*
 !groups/main/CLAUDE.md
+!groups/main/memory/
 !groups/global/CLAUDE.md
+!groups/global/memory/
 
 # Secrets
 *.keys.json
@@ -24,6 +26,9 @@ groups/global/*
 
 # OS
 .DS_Store
+
+# Firebase MCP (Claude Code plugin artifact)
+firebase-debug.log
 
 # IDE
 .idea/

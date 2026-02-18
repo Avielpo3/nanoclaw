@@ -38,11 +38,9 @@ Avi's instructions tell it: before finishing any response, review what was discu
 
 This covers all conversations including short ones (e.g., a single voice memo).
 
-### 2. PreCompact hook (safety net)
+### 2. PreCompact conversation archiving (existing safety net)
 
-The existing PreCompact hook in `container/agent-runner/src/index.ts` is updated to prompt Avi: "Before context is compacted, extract any unsaved memories to your memory/ files."
-
-Catches anything missed during normal responses.
+The existing PreCompact hook already archives full conversation transcripts to `conversations/`. This serves as the backup — if Avi missed extracting a fact during the conversation, the raw transcript is searchable later. No changes needed to the hook (PreCompact hooks cannot inject prompts into the conversation).
 
 ## Retrieval: Lean Context, Read on Demand
 
@@ -63,7 +61,8 @@ Files are local in the container, so reads are instant.
 |------|--------|
 | `groups/global/CLAUDE.md` | Updated memory section with extraction instructions and file index |
 | `groups/main/CLAUDE.md` | Updated memory section with extraction instructions and file index |
-| `container/agent-runner/src/index.ts` | Updated PreCompact hook to include memory extraction prompt |
+| `.gitignore` | Added exceptions for `groups/*/memory/` folders |
+| `groups/main/memory/*.md` | Seeded empty memory files (persona, preferences, facts, events) |
 
 ## Why Not Vector DB
 
