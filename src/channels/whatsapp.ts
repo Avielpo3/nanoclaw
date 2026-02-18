@@ -6,11 +6,13 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   WASocket,
+  downloadMediaMessage,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
 import { STORE_DIR } from '../config.js';
+import { transcribeAudio } from '../transcription.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
@@ -164,12 +166,18 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
-          const content =
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption ||
             '';
+
+          // Handle voice messages (ptt = push-to-talk)
+          if (msg.message?.audioMessage?.ptt) {
+            content = await this.transcribeVoiceMessage(msg);
+          }
+
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
 
@@ -287,6 +295,29 @@ export class WhatsAppChannel implements Channel {
     }
 
     return jid;
+  }
+
+  private async transcribeVoiceMessage(msg: any): Promise<string> {
+    const tempPath = `/tmp/nanoclaw-voice-${msg.key.id}.ogg`;
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+        logger,
+        reuploadRequest: this.sock.updateMediaMessage,
+      });
+      fs.writeFileSync(tempPath, buffer);
+      const text = await transcribeAudio(tempPath);
+      if (text) {
+        logger.info({ msgId: msg.key.id, chars: text.length }, 'Voice message transcribed');
+        return `[Voice: ${text}]`;
+      }
+      logger.warn({ msgId: msg.key.id }, 'Voice transcription returned empty');
+      return '[Voice message - transcription failed]';
+    } catch (err) {
+      logger.error({ err, msgId: msg.key.id }, 'Failed to process voice message');
+      return '[Voice message - transcription failed]';
+    } finally {
+      try { fs.unlinkSync(tempPath); } catch {}
+    }
   }
 
   private async flushOutgoingQueue(): Promise<void> {
