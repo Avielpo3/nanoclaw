@@ -352,6 +352,152 @@ async function runTests(): Promise<void> {
     assert(data.result === 42, 'Server should still respond after eval error');
   });
 
+  // --- Fiverr integration (requires logged-in Chrome session) ---
+
+  console.log('\n  \x1b[1mFiverr Integration\x1b[0m\n');
+
+  let fiverrLoggedIn = false;
+
+  await test('fiverr: navigate and verify logged-in session', async () => {
+    const result = await callTool('browser_navigate', { url: 'https://www.fiverr.com' });
+    const data = JSON.parse(getTextContent(result));
+    assertContains(data.url, 'fiverr.com', 'URL');
+    assert(typeof data.title === 'string' && data.title.length > 0, 'should have a title');
+
+    // Wait for page to fully render
+    await callTool('browser_wait', { timeout_ms: 2000 });
+
+    // Check login state: logged-in users see their avatar/profile nav,
+    // logged-out users get redirected or see "Join"/"Sign In" prominently.
+    const finalUrl = await callTool('browser_eval', { expression: 'window.location.href' });
+    const urlData = JSON.parse(getTextContent(finalUrl));
+    const onLoginPage = typeof urlData.result === 'string' &&
+      (urlData.result.includes('/login') || urlData.result.includes('/registration'));
+    assert(!onLoginPage, `Redirected to login page (${urlData.result}). You must be logged into Fiverr in Chrome first.`);
+
+    // Look for logged-in indicators in the DOM
+    const checkLoggedIn = await callTool('browser_eval', {
+      expression: `(() => {
+        const avatar = document.querySelector('[class*="avatar"], [class*="profile"], img[alt*="profile"], [data-testid*="avatar"]');
+        const orderNav = document.querySelector('a[href*="/orders"], a[href*="manage_orders"]');
+        const signIn = document.querySelector('a[href*="/login"], a[href*="sign_in"]');
+        const hasUserMenu = !!avatar || !!orderNav;
+        return { hasUserMenu, hasSignIn: !!signIn, url: window.location.href };
+      })()`,
+    });
+    const loginData = JSON.parse(getTextContent(checkLoggedIn));
+    const loginInfo = loginData.result;
+
+    if (!loginInfo.hasUserMenu && loginInfo.hasSignIn) {
+      throw new Error('Not logged in. Sign into Fiverr in Chrome (launched via scripts/launch-chrome.sh) first.');
+    }
+
+    fiverrLoggedIn = true;
+  });
+
+  await test('fiverr: access dashboard and verify profile', async () => {
+    if (!fiverrLoggedIn) throw new Error('Skipped — not logged in');
+
+    const result = await callTool('browser_navigate', { url: 'https://www.fiverr.com/dashboard' });
+    const data = JSON.parse(getTextContent(result));
+    await callTool('browser_wait', { timeout_ms: 3000 });
+
+    const finalUrl = await callTool('browser_eval', { expression: 'window.location.href' });
+    const urlData = JSON.parse(getTextContent(finalUrl));
+    assert(
+      !String(urlData.result).includes('/login'),
+      `Dashboard redirected to login: ${urlData.result}`,
+    );
+
+    // Verify dashboard content loaded
+    const snap = await callTool('browser_snapshot');
+    const snapText = getTextContent(snap);
+    assert(snapText.length > 200, 'Dashboard snapshot should have substantial content');
+
+    const pageText = await callTool('browser_get_text', {});
+    const textData = JSON.parse(getTextContent(pageText));
+    assert(textData.text.length > 100, 'Dashboard should have text content');
+  });
+
+  await test('fiverr: search for a gig', async () => {
+    if (!fiverrLoggedIn) throw new Error('Skipped — not logged in');
+
+    await callTool('browser_navigate', { url: 'https://www.fiverr.com' });
+    await callTool('browser_wait', { timeout_ms: 2000 });
+
+    // Find and fill the search box
+    const searchResult = await callTool('browser_eval', {
+      expression: `(() => {
+        const input = document.querySelector(
+          'input[type="search"], input[placeholder*="search" i], input[name="query"], input[aria-label*="search" i], form input[type="text"]'
+        );
+        if (!input) return { found: false };
+        input.focus();
+        return { found: true, tag: input.tagName, placeholder: input.placeholder || '' };
+      })()`,
+    });
+    const searchData = JSON.parse(getTextContent(searchResult));
+
+    if (searchData.result.found) {
+      const selector = 'input[type="search"], input[placeholder*="search" i], input[name="query"], input[aria-label*="search" i], form input[type="text"]';
+      await callTool('browser_fill', { selector, value: 'logo design' });
+      // Submit via Enter key
+      await callTool('browser_eval', {
+        expression: `(() => {
+          const input = document.querySelector('${selector}');
+          if (input) input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+          const form = input?.closest('form');
+          if (form) form.submit();
+        })()`,
+      });
+    } else {
+      // Fallback: navigate directly to search URL
+      await callTool('browser_navigate', { url: 'https://www.fiverr.com/search/gigs?query=logo+design' });
+    }
+
+    await callTool('browser_wait', { timeout_ms: 3000 });
+
+    const resultUrl = await callTool('browser_eval', { expression: 'window.location.href' });
+    const urlData = JSON.parse(getTextContent(resultUrl));
+    assertContains(String(urlData.result), 'fiverr.com', 'Should still be on Fiverr');
+
+    // Verify search results loaded
+    const pageText = await callTool('browser_get_text', {});
+    const textData = JSON.parse(getTextContent(pageText));
+    assert(textData.text.length > 200, 'Search results page should have content');
+  });
+
+  await test('fiverr: navigate to orders page', async () => {
+    if (!fiverrLoggedIn) throw new Error('Skipped — not logged in');
+
+    const result = await callTool('browser_navigate', { url: 'https://www.fiverr.com/users/orders' });
+    await callTool('browser_wait', { timeout_ms: 3000 });
+
+    const finalUrl = await callTool('browser_eval', { expression: 'window.location.href' });
+    const urlData = JSON.parse(getTextContent(finalUrl));
+    assert(
+      !String(urlData.result).includes('/login'),
+      `Orders page redirected to login: ${urlData.result}`,
+    );
+
+    const pageText = await callTool('browser_get_text', {});
+    const textData = JSON.parse(getTextContent(pageText));
+    assert(textData.text.length > 50, 'Orders page should have content');
+  });
+
+  await test('fiverr: screenshot of dashboard', async () => {
+    if (!fiverrLoggedIn) throw new Error('Skipped — not logged in');
+
+    await callTool('browser_navigate', { url: 'https://www.fiverr.com/dashboard' });
+    await callTool('browser_wait', { timeout_ms: 3000 });
+
+    const result = await callTool('browser_screenshot', { fullPage: false });
+    const base64 = getImageContent(result);
+    assert(base64.length > 1000, 'Fiverr dashboard screenshot should have substantial data');
+    const buf = Buffer.from(base64, 'base64');
+    assert(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47, 'Should be valid PNG');
+  });
+
   // --- Summary ---
 
   console.log(`\n\x1b[1m  Results: ${passed} passed, ${failed} failed\x1b[0m`);

@@ -48,7 +48,17 @@ fi
 mkdir -p "$USER_DATA_DIR"
 
 echo "Launching Chrome with CDP on port $CDP_PORT (profile: $USER_DATA_DIR)..."
-"$CHROME_APP" --remote-debugging-port="$CDP_PORT" --user-data-dir="$USER_DATA_DIR" &
+"$CHROME_APP" \
+  --remote-debugging-port="$CDP_PORT" \
+  --user-data-dir="$USER_DATA_DIR" \
+  --disable-blink-features=AutomationControlled \
+  --disable-features=AutomationControlled \
+  --disable-infobars \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-background-networking=false \
+  --enable-features=NetworkService,NetworkServiceInProcess \
+  &
 disown
 
 # Wait for CDP to become available

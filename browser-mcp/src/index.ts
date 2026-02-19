@@ -72,6 +72,89 @@ function logAction(action: string, params: Record<string, unknown>, durationMs: 
   } catch { /* ignore */ }
 }
 
+// --- Stealth: anti-bot-detection patches injected into every page ---
+
+const STEALTH_SCRIPT = `
+(() => {
+  // 1. navigator.webdriver → undefined (PerimeterX primary signal)
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+  // 2. Fix chrome.runtime to look like a real extension environment
+  if (!window.chrome) window.chrome = {};
+  if (!window.chrome.runtime) {
+    window.chrome.runtime = {
+      connect: () => {},
+      sendMessage: () => {},
+      onMessage: { addListener: () => {}, removeListener: () => {} },
+    };
+  }
+
+  // 3. navigator.plugins — CDP often has an empty PluginArray
+  const fakePlugins = [
+    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+  ];
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+      const arr = fakePlugins.map(p => {
+        const pl = Object.create(Plugin.prototype);
+        Object.defineProperties(pl, {
+          name: { value: p.name }, filename: { value: p.filename },
+          description: { value: p.description }, length: { value: 0 },
+        });
+        return pl;
+      });
+      arr.refresh = () => {};
+      Object.setPrototypeOf(arr, PluginArray.prototype);
+      return arr;
+    },
+  });
+
+  // 4. navigator.languages fallback
+  if (!navigator.languages || navigator.languages.length === 0) {
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+  }
+
+  // 5. Permissions API — don't leak "denied" for notifications (automation default)
+  const origQuery = window.Permissions?.prototype?.query;
+  if (origQuery) {
+    window.Permissions.prototype.query = function(desc) {
+      if (desc.name === 'notifications') {
+        return Promise.resolve({ state: 'prompt', onchange: null });
+      }
+      return origQuery.call(this, desc);
+    };
+  }
+
+  // 6. WebGL vendor/renderer — ensure they don't say "SwiftShader" (headless signal)
+  const getParam = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function(param) {
+    if (param === 37445) return 'Google Inc. (Intel)';       // UNMASKED_VENDOR_WEBGL
+    if (param === 37446) return 'ANGLE (Intel, Mesa Intel(R) UHD Graphics, OpenGL 4.6)'; // UNMASKED_RENDERER_WEBGL
+    return getParam.call(this, param);
+  };
+})();
+`;
+
+async function injectStealth(page: Page): Promise<void> {
+  try {
+    await page.evaluate(STEALTH_SCRIPT);
+  } catch { /* page might have navigated away */ }
+}
+
+async function setupStealthForContext(ctx: BrowserContext): Promise<void> {
+  try {
+    await ctx.addInitScript(STEALTH_SCRIPT);
+  } catch { /* some CDP contexts don't support addInitScript */ }
+  for (const page of ctx.pages()) {
+    await injectStealth(page);
+  }
+  ctx.on('page', async (newPage) => {
+    await injectStealth(newPage);
+  });
+}
+
 // --- Browser Connection ---
 
 let browser: Browser | null = null;
@@ -80,7 +163,6 @@ let context: BrowserContext | null = null;
 async function getContext(): Promise<BrowserContext> {
   if (context) {
     try {
-      // Test if still connected
       await context.pages();
       return context;
     } catch {
@@ -102,6 +184,7 @@ async function getContext(): Promise<BrowserContext> {
     throw new Error('No browser contexts found. Open a Chrome window first.');
   }
   context = contexts[0];
+  await setupStealthForContext(context);
 
   browser.on('disconnected', () => {
     browser = null;
@@ -150,6 +233,13 @@ async function getElementBySelector(page: Page, selector: string) {
   return page.locator(selector).first();
 }
 
+// --- Humanized delay to reduce bot fingerprinting ---
+
+function humanDelay(): Promise<void> {
+  const ms = 80 + Math.floor(Math.random() * 220); // 80-300ms
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 // --- Timed wrapper ---
 
 async function timed<T>(action: string, params: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
@@ -180,6 +270,7 @@ server.tool(
     return timed('navigate', { url: args.url }, async () => {
       const page = await getActivePage();
       await page.goto(args.url, { timeout: DEFAULT_TIMEOUT, waitUntil: 'domcontentloaded' });
+      await injectStealth(page);
       return {
         content: [{
           type: 'text' as const,
@@ -216,6 +307,7 @@ server.tool(
     return timed('click', { selector: args.selector }, async () => {
       const page = await getActivePage();
       const el = await getElementBySelector(page, args.selector);
+      await humanDelay();
       await el.click({ timeout: DEFAULT_TIMEOUT });
       // Wait for any navigation or network activity to settle
       await page.waitForLoadState('domcontentloaded').catch(() => {});
@@ -237,6 +329,7 @@ server.tool(
     return timed('fill', { selector: args.selector }, async () => {
       const page = await getActivePage();
       const el = await getElementBySelector(page, args.selector);
+      await humanDelay();
       await el.fill(args.value, { timeout: DEFAULT_TIMEOUT });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
@@ -256,6 +349,7 @@ server.tool(
     return timed('select', { selector: args.selector, value: args.value }, async () => {
       const page = await getActivePage();
       const el = await getElementBySelector(page, args.selector);
+      await humanDelay();
       await el.selectOption(args.value, { timeout: DEFAULT_TIMEOUT });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
