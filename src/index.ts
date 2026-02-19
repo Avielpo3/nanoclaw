@@ -9,6 +9,7 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  SESSION_MAX_AGE_MS,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
@@ -26,7 +27,9 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getSessionAge,
   initDatabase,
+  clearSession,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -34,6 +37,7 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { startBrowserBridge } from './browser-bridge.js';
 import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
@@ -137,7 +141,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const hasTrigger = missedMessages.some((m) =>
-      TRIGGER_PATTERN.test(m.content.trim()),
+      TRIGGER_PATTERN.test(m.content.trim()) || m.content.trim().startsWith('[Voice:'),
     );
     if (!hasTrigger) return true;
   }
@@ -218,6 +222,17 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
+
+  // Rotate session if it's too old to avoid OOM from long session replay
+  const sessionAge = getSessionAge(group.folder);
+  if (sessionAge !== null && sessionAge > SESSION_MAX_AGE_MS) {
+    logger.info(
+      { group: group.name, ageMinutes: Math.round(sessionAge / 60000) },
+      'Session expired, starting fresh',
+    );
+    clearSession(group.folder);
+    delete sessions[group.folder];
+  }
   const sessionId = sessions[group.folder];
 
   // Update tasks snapshot for container to read (filtered by group)
@@ -246,11 +261,14 @@ async function runAgent(
   );
 
   // Wrap onOutput to track session ID from streamed results
+  const isNewSession = !sessionId;
+  let sessionTracked = false;
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          setSession(group.folder, output.newSessionId, isNewSession && !sessionTracked);
+          sessionTracked = true;
         }
         await onOutput(output);
       }
@@ -273,7 +291,7 @@ async function runAgent(
 
     if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      setSession(group.folder, output.newSessionId, isNewSession && !sessionTracked);
     }
 
     if (output.status === 'error') {
@@ -339,7 +357,7 @@ async function startMessageLoop(): Promise<void> {
           // context when a trigger eventually arrives.
           if (needsTrigger) {
             const hasTrigger = groupMessages.some((m) =>
-              TRIGGER_PATTERN.test(m.content.trim()),
+              TRIGGER_PATTERN.test(m.content.trim()) || m.content.trim().startsWith('[Voice:'),
             );
             if (!hasTrigger) continue;
           }
@@ -447,7 +465,7 @@ function ensureContainerSystemRunning(): void {
       .map((c) => c.configuration.id);
     for (const name of orphans) {
       try {
-        execSync(`container stop ${name}`, { stdio: 'pipe' });
+        execSync(`container kill ${name}`, { stdio: 'pipe', timeout: 5000 });
       } catch { /* already stopped */ }
     }
     if (orphans.length > 0) {
@@ -503,6 +521,7 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });
+  startBrowserBridge();
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop();

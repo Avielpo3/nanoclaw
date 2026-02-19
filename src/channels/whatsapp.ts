@@ -166,6 +166,10 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
+          // Debug: log raw message keys to diagnose forwarded/empty messages
+          const msgKeys = msg.message ? Object.keys(msg.message) : [];
+          logger.debug({ msgId: msg.key.id, messageKeys: msgKeys, rawMessage: JSON.stringify(msg.message).slice(0, 500) }, 'Raw message structure');
+
           // Extract text content from all known message types
           // Forwarded messages may be wrapped in contextInfo but use the same fields
           const m = msg.message || {};
@@ -215,12 +219,11 @@ export class WhatsAppChannel implements Channel {
             ephMsg?.documentMessage?.contextInfo ||
             null;
           const isForwarded = contextInfo?.isForwarded || (contextInfo?.forwardingScore ?? 0) > 0;
-          if (isForwarded && content) {
-            content = `[Forwarded message]\n${content}`;
-          }
 
-          // Handle voice messages (ptt = push-to-talk)
-          if (m.audioMessage?.ptt || m.ephemeralMessage?.message?.audioMessage?.ptt) {
+          // Handle voice/audio messages
+          // ptt = push-to-talk (voice note). Forwarded voice notes may lose ptt flag.
+          const audioMsg = m.audioMessage || m.ephemeralMessage?.message?.audioMessage;
+          if (audioMsg && !content) {
             content = await this.transcribeVoiceMessage(msg);
           }
 
@@ -235,10 +238,18 @@ export class WhatsAppChannel implements Channel {
             || null;
 
           if (mediaMsg && !content) {
-            // Save media to the group's folder so it's accessible inside the container
-            // at /workspace/group/media/
             const groupFolder = groups[chatJid]?.folder;
             content = await this.extractMediaContent(msg, mediaMsg, isForwarded, groupFolder);
+          }
+
+          // Tag forwarded messages after all content extraction
+          if (isForwarded && content) {
+            content = `[Forwarded message]\n${content}`;
+          }
+
+          // Log empty messages for debugging forwarded content issues
+          if (!content) {
+            logger.warn({ msgId: msg.key.id, messageKeys: msgKeys, hasMedia: !!mediaMsg, rawMessage: JSON.stringify(msg.message).slice(0, 2000) }, 'Message content is empty after all extraction attempts');
           }
 
           const sender = msg.key.participant || msg.key.remoteJid || '';

@@ -184,6 +184,7 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'browser'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -283,8 +284,8 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  // Main group gets more memory for subagents + browser; others get 2GB
-  const defaultMemory = input.isMain ? 4096 : 2048;
+  // Main group gets more memory for subagents + browser + session replay; others get 2GB
+  const defaultMemory = input.isMain ? 8192 : 2048;
   const memoryMb = group.containerConfig?.memory || defaultMemory;
   const containerArgs = buildContainerArgs(mounts, containerName, memoryMb);
 

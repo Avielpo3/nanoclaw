@@ -115,7 +115,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       const date = new Date(args.schedule_value);
       if (isNaN(date.getTime())) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use ISO 8601 format like "2026-02-01T15:30:00.000Z".` }],
+          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use ISO 8601 format like "2026-02-01T15:30:00" (local time, no Z suffix).` }],
           isError: true,
         };
       }
@@ -247,7 +247,7 @@ Use available_groups.json to find the JID for a group. The folder name should be
     jid: z.string().describe('The WhatsApp JID (e.g., "120363336345536173@g.us")'),
     name: z.string().describe('Display name for the group'),
     folder: z.string().describe('Folder name for group files (lowercase, hyphens, e.g., "family-chat")'),
-    trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    trigger: z.string().describe('Trigger word (e.g., "@Avi")'),
   },
   async (args) => {
     if (!isMain) {
@@ -273,6 +273,162 @@ Use available_groups.json to find the JID for a group. The folder name should be
     };
   },
 );
+
+// --- Browser control (main group only) ---
+
+if (isMain) {
+  const BROWSER_DIR = path.join(IPC_DIR, 'browser');
+
+  function writeBrowserRequest(action: string, params: Record<string, unknown>): string {
+    fs.mkdirSync(BROWSER_DIR, { recursive: true });
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const filename = `${id}.request.json`;
+    const filepath = path.join(BROWSER_DIR, filename);
+    const tempPath = `${filepath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify({ action, params }));
+    fs.renameSync(tempPath, filepath);
+    return id;
+  }
+
+  function waitForBrowserResponse(id: string, timeoutMs = 60_000): Promise<{ success: boolean; result?: unknown; error?: string }> {
+    const resPath = path.join(BROWSER_DIR, `${id}.response.json`);
+    const start = Date.now();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (Date.now() - start > timeoutMs) {
+          reject(new Error('Browser action timed out'));
+          return;
+        }
+        try {
+          if (fs.existsSync(resPath)) {
+            const data = JSON.parse(fs.readFileSync(resPath, 'utf-8'));
+            fs.unlinkSync(resPath);
+            resolve(data);
+            return;
+          }
+        } catch { /* retry */ }
+        setTimeout(check, 200);
+      };
+      check();
+    });
+  }
+
+  async function browserAction(action: string, params: Record<string, unknown> = {}) {
+    const id = writeBrowserRequest(action, params);
+    const response = await waitForBrowserResponse(id);
+    if (!response.success) {
+      return {
+        content: [{ type: 'text' as const, text: `Browser error: ${response.error}` }],
+        isError: true,
+      };
+    }
+    const text = typeof response.result === 'string' ? response.result : JSON.stringify(response.result, null, 2);
+    return { content: [{ type: 'text' as const, text }] };
+  }
+
+  server.tool(
+    'browser_navigate',
+    "Navigate the user's real Chrome browser to a URL (with their cookies/sessions)",
+    { url: z.string().describe('The URL to navigate to') },
+    async (args) => browserAction('navigate', { url: args.url }),
+  );
+
+  server.tool(
+    'browser_snapshot',
+    "Get an accessibility snapshot of the user's Chrome browser. Returns interactive elements with ref numbers.",
+    {},
+    async () => browserAction('snapshot'),
+  );
+
+  server.tool(
+    'browser_click',
+    'Click an element in the browser',
+    { selector: z.string().describe('CSS selector or ref number') },
+    async (args) => browserAction('click', { selector: args.selector }),
+  );
+
+  server.tool(
+    'browser_fill',
+    'Fill a text field in the browser',
+    {
+      selector: z.string().describe('CSS selector or ref number'),
+      value: z.string().describe('Text to type'),
+    },
+    async (args) => browserAction('fill', { selector: args.selector, value: args.value }),
+  );
+
+  server.tool(
+    'browser_select',
+    'Select a dropdown option in the browser',
+    {
+      selector: z.string().describe('CSS selector or ref number'),
+      value: z.string().describe('Value to select'),
+    },
+    async (args) => browserAction('select', { selector: args.selector, value: args.value }),
+  );
+
+  server.tool(
+    'browser_screenshot',
+    "Take a screenshot of the user's Chrome browser",
+    { fullPage: z.boolean().optional().default(false) },
+    async (args) => browserAction('screenshot', { fullPage: args.fullPage }),
+  );
+
+  server.tool(
+    'browser_get_text',
+    'Get text content from the browser page',
+    { selector: z.string().optional().describe('CSS selector, or omit for full page') },
+    async (args) => browserAction('get_text', { selector: args.selector }),
+  );
+
+  server.tool(
+    'browser_eval',
+    'Execute JavaScript in the browser console',
+    { expression: z.string().describe('JavaScript expression') },
+    async (args) => browserAction('eval', { expression: args.expression }),
+  );
+
+  server.tool(
+    'browser_wait',
+    'Wait for an element or a timeout in the browser',
+    {
+      selector: z.string().optional(),
+      timeout_ms: z.number().optional().default(5000),
+    },
+    async (args) => browserAction('wait', { selector: args.selector, timeout_ms: args.timeout_ms }),
+  );
+
+  server.tool(
+    'browser_tabs',
+    'List all open browser tabs',
+    {},
+    async () => browserAction('tabs'),
+  );
+
+  server.tool(
+    'browser_switch_tab',
+    'Switch to a different browser tab',
+    {
+      index: z.number().optional(),
+      url_pattern: z.string().optional(),
+    },
+    async (args) => browserAction('switch_tab', { index: args.index, url_pattern: args.url_pattern }),
+  );
+
+  server.tool(
+    'browser_back',
+    'Navigate back in browser history',
+    {},
+    async () => browserAction('back'),
+  );
+
+  server.tool(
+    'browser_forward',
+    'Navigate forward in browser history',
+    {},
+    async () => browserAction('forward'),
+  );
+}
 
 // Start the stdio transport
 const transport = new StdioServerTransport();
