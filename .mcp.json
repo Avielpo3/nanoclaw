@@ -1,3 +1,8 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": ["browser-mcp/dist/index.js"]
+    }
+  }
 }

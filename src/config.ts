@@ -1,6 +1,6 @@
 import path from 'path';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Avi';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -56,6 +56,13 @@ export const TRIGGER_PATTERN = new RegExp(
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'claude-sonnet-4-6';
+
+// Session rotation: start a fresh session when the current one is older than this.
+// Memory files persist, so context isn't lost — just the in-context conversation history.
+export const SESSION_MAX_AGE_MS = parseInt(
+  process.env.SESSION_MAX_AGE_MS || '7200000',
+  10,
+); // 2 hours default
 
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;

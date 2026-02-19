@@ -61,7 +61,8 @@ function createSchema(database: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL
+      session_id TEXT NOT NULL,
+      created_at TEXT
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
@@ -443,10 +444,28 @@ export function getSession(groupFolder: string): string | undefined {
   return row?.session_id;
 }
 
-export function setSession(groupFolder: string, sessionId: string): void {
-  db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+export function getSessionAge(groupFolder: string): number | null {
+  const row = db
+    .prepare('SELECT created_at FROM sessions WHERE group_folder = ?')
+    .get(groupFolder) as { created_at: string | null } | undefined;
+  if (!row?.created_at) return null;
+  return Date.now() - new Date(row.created_at).getTime();
+}
+
+export function setSession(groupFolder: string, sessionId: string, isNew = false): void {
+  if (isNew) {
+    db.prepare(
+      'INSERT OR REPLACE INTO sessions (group_folder, session_id, created_at) VALUES (?, ?, ?)',
+    ).run(groupFolder, sessionId, new Date().toISOString());
+  } else {
+    db.prepare(
+      'INSERT OR REPLACE INTO sessions (group_folder, session_id, created_at) VALUES (?, ?, COALESCE((SELECT created_at FROM sessions WHERE group_folder = ?), ?))',
+    ).run(groupFolder, sessionId, groupFolder, new Date().toISOString());
+  }
+}
+
+export function clearSession(groupFolder: string): void {
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
 }
 
 export function getAllSessions(): Record<string, string> {

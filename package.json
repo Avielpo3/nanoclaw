@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cd browser-mcp && npm run build",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "auth": "tsx src/whatsapp-auth.ts",
@@ -23,6 +23,7 @@
     "cron-parser": "^5.5.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
+    "playwright-core": "^1.58.2",
     "qrcode-terminal": "^0.12.0",
     "zod": "^4.3.6"
   },

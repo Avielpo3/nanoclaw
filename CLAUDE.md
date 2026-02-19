@@ -16,10 +16,17 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `src/router.ts` | Message formatting and outbound routing |
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
+| `src/group-queue.ts` | Per-group queue with global concurrency limit |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
+| `src/mount-security.ts` | Mount allowlist validation for container security |
+| `src/logger.ts` | Pino logger, uncaught error routing |
+| `src/browser-bridge.ts` | IPC bridge to host Chrome via Playwright CDP |
+| `src/transcription.ts` | Voice message transcription via Whisper |
+| `src/whatsapp-auth.ts` | Standalone WhatsApp QR auth script |
+| `src/types.ts` | Shared type definitions |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
-| `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+| `container/skills/agent-browser/SKILL.md` | Browser automation skill (available to all agents) |
 
 ## Skills
 
