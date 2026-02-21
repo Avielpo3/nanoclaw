@@ -17,6 +17,7 @@
 | 11 | [Security](./11-security.md) | Input sanitization, secrets management, rate limiting, CORS |
 | 12 | [Implementation Plan](./12-implementation-plan.md) | Phased delivery, milestones, task breakdown |
 | 13 | [Review Findings](./13-review-findings.md) | Consolidated findings from 4 review agents, applied changes |
+| REF | [Extracted Reference Data](./REF-extracted-data.md) | All keys, selectors, URLs, authority IDs, Hebrew strings from v1+v2 repos |
 
 ## Decisions Summary
 

@@ -62,3 +62,28 @@ container builder stop && container builder rm && container builder start
 ```
 
 Always verify after rebuild: `container run -i --rm --entrypoint wc nanoclaw-agent:latest -l /app/src/index.ts`
+
+## Fleet Service (Parking Appeal Automation)
+
+Design docs: `docs/plans/fleet/` — 14 documents covering architecture, data model, job system, adapters, browser engine, API, UI, logging, errors, testing, security, implementation plan, review findings.
+
+### Quick Reference
+
+| Resource | Location |
+|----------|----------|
+| Design index | `docs/plans/fleet/00-INDEX.md` |
+| Implementation plan | `docs/plans/fleet/12-implementation-plan.md` |
+| Review findings | `docs/plans/fleet/13-review-findings.md` |
+| **Reference data (keys, selectors, URLs, authority IDs)** | `docs/plans/fleet/REF-extracted-data.md` |
+| v1 reference repo | `/tmp/fleet-reference/v1/` (may need re-clone from `github.com/roadprotect/road-protect-fleet-crawlers`) |
+| v2 reference repo | `/tmp/fleet-reference/v2/` (may need re-clone from `github.com/roadprotect/road-protect-fleet-crawlers-v2`) |
+
+### Key Data Points
+
+- **2captcha API key**: `122d2fc4ad2485e4eeff31782cce61b3`
+- **Default form email**: `muni@roadprotect.co.il`
+- **Default form phone**: `0544757841`
+- **Metropark 33 issuers**, Mileon 40 issuers — full list in REF doc
+- **Metropark selectors**: All CSS selectors for search form, appeal form, CAPTCHA, file uploads, submit, and result detection
+- **Mileon/Lola selectors**: Full transfer form selectors for new and old variants
+- **Hebrew detection strings**: Success, not found, already submitted, paid, collection, temporary error
