@@ -143,6 +143,89 @@ async function injectStealth(page: Page): Promise<void> {
   } catch { /* page might have navigated away */ }
 }
 
+// --- PerimeterX "Press & Hold" challenge solver ---
+
+async function detectPxChallenge(page: Page): Promise<boolean> {
+  try {
+    const result = await page.evaluate(() => {
+      const text = document.body?.innerText || '';
+      return text.includes('human touch') ||
+             text.includes('Press & Hold') ||
+             text.includes('press & hold') ||
+             !!document.querySelector('#px-captcha, [id*="px-captcha"], [class*="px-captcha"]');
+    });
+    return !!result;
+  } catch { return false; }
+}
+
+async function solvePxChallenge(page: Page): Promise<{ solved: boolean; attempts: number; error?: string }> {
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts) {
+    attempts++;
+    const hasPx = await detectPxChallenge(page);
+    if (!hasPx) return { solved: true, attempts };
+
+    try {
+      const btn = await page.evaluate(() => {
+        const el = document.querySelector('#px-captcha, [id*="px-captcha"], [class*="px-captcha"]') as HTMLElement | null;
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, w: rect.width, h: rect.height };
+      });
+
+      if (!btn || btn.w === 0) {
+        await page.waitForTimeout(1000);
+        continue;
+      }
+
+      // Move mouse naturally: start off-target, drift in
+      const startX = btn.x + (Math.random() * 200 - 100);
+      const startY = btn.y + (Math.random() * 150 + 50);
+      await page.mouse.move(startX, startY);
+      await page.waitForTimeout(200 + Math.random() * 300);
+
+      // Approach with a few intermediate steps
+      const steps = 3 + Math.floor(Math.random() * 3);
+      for (let i = 1; i <= steps; i++) {
+        const ratio = i / steps;
+        const jitterX = (Math.random() - 0.5) * 8;
+        const jitterY = (Math.random() - 0.5) * 8;
+        await page.mouse.move(
+          startX + (btn.x - startX) * ratio + jitterX,
+          startY + (btn.y - startY) * ratio + jitterY,
+        );
+        await page.waitForTimeout(30 + Math.random() * 60);
+      }
+
+      // Final position on target
+      await page.mouse.move(btn.x + (Math.random() * 4 - 2), btn.y + (Math.random() * 4 - 2));
+      await page.waitForTimeout(100 + Math.random() * 200);
+
+      // Press and hold (PerimeterX typically requires 3-8 seconds)
+      await page.mouse.down();
+      const holdMs = 4000 + Math.floor(Math.random() * 3000); // 4-7s
+      await page.waitForTimeout(holdMs);
+      await page.mouse.up();
+
+      // Wait for challenge to resolve
+      await page.waitForTimeout(2000 + Math.random() * 1000);
+
+      const stillBlocked = await detectPxChallenge(page);
+      if (!stillBlocked) return { solved: true, attempts };
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempts >= maxAttempts) return { solved: false, attempts, error: msg };
+    }
+
+    await page.waitForTimeout(1500 + Math.random() * 1000);
+  }
+
+  return { solved: false, attempts, error: 'Max attempts reached' };
+}
+
 async function setupStealthForContext(ctx: BrowserContext): Promise<void> {
   try {
     await ctx.addInitScript(STEALTH_SCRIPT);
@@ -271,10 +354,22 @@ server.tool(
       const page = await getActivePage();
       await page.goto(args.url, { timeout: DEFAULT_TIMEOUT, waitUntil: 'domcontentloaded' });
       await injectStealth(page);
+
+      // Auto-solve PerimeterX challenge if detected
+      let pxResult: { solved: boolean; attempts: number; error?: string } | null = null;
+      if (await detectPxChallenge(page)) {
+        pxResult = await solvePxChallenge(page);
+        if (pxResult.solved) await injectStealth(page);
+      }
+
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ url: page.url(), title: await page.title() }),
+          text: JSON.stringify({
+            url: page.url(),
+            title: await page.title(),
+            ...(pxResult && { pxChallenge: pxResult }),
+          }),
         }],
       };
     });
@@ -395,6 +490,28 @@ server.tool(
       if (text.length > 50_000) text = text.slice(0, 50_000) + '\n... (truncated)';
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ text }) }],
+      };
+    });
+  },
+);
+
+server.tool(
+  'browser_solve_px',
+  'Solve a PerimeterX "Press & Hold" challenge on the current page. Auto-detects and attempts to solve using humanized mouse movements and long press. Returns whether it succeeded.',
+  {},
+  async () => {
+    return timed('solve_px', {}, async () => {
+      const page = await getActivePage();
+      const hasPx = await detectPxChallenge(page);
+      if (!hasPx) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ detected: false, message: 'No PX challenge found on page' }) }],
+        };
+      }
+      const result = await solvePxChallenge(page);
+      if (result.solved) await injectStealth(page);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ detected: true, ...result }) }],
       };
     });
   },

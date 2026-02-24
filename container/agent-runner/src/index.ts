@@ -469,8 +469,8 @@ async function runQuery(
           },
         },
         gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          command: 'node',
+          args: ['/home/node/google-gmail-mcp/build/index.js'],
         },
         'google-calendar': {
           command: 'npx',

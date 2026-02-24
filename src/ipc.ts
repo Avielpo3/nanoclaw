@@ -27,6 +27,7 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  createGroup?: (subject: string, participants?: string[]) => Promise<string>;
 }
 
 let ipcWatcherRunning = false;
@@ -166,13 +167,16 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
-    // For register_group
+    // For register_group / create_group
     jid?: string;
     name?: string;
     folder?: string;
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    subject?: string;
+    participants?: string[];
+    resultFile?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -374,6 +378,42 @@ export async function processTaskIpc(
           { data },
           'Invalid register_group request - missing required fields',
         );
+      }
+      break;
+
+    case 'create_group':
+      // Only main group can create WhatsApp groups
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized create_group attempt blocked');
+        break;
+      }
+      if (data.subject && deps.createGroup) {
+        try {
+          const newJid = await deps.createGroup(data.subject, data.participants);
+          logger.info({ subject: data.subject, newJid }, 'Group created via IPC');
+          // Write result to file so caller can read the JID
+          if (data.resultFile) {
+            fs.writeFileSync(data.resultFile, JSON.stringify({ jid: newJid }));
+          }
+          // Auto-register if folder/trigger provided
+          if (data.folder && data.trigger) {
+            deps.registerGroup(newJid, {
+              name: data.name || data.subject,
+              folder: data.folder,
+              trigger: data.trigger,
+              added_at: new Date().toISOString(),
+              containerConfig: data.containerConfig,
+              requiresTrigger: data.requiresTrigger,
+            });
+          }
+        } catch (err) {
+          logger.error({ err, subject: data.subject }, 'Failed to create group via IPC');
+          if (data.resultFile) {
+            fs.writeFileSync(data.resultFile, JSON.stringify({ error: String(err) }));
+          }
+        }
+      } else {
+        logger.warn({ data }, 'Invalid create_group request - missing subject or createGroup dep');
       }
       break;
 

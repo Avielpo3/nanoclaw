@@ -293,6 +293,13 @@ export class WhatsAppChannel implements Channel {
     return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net');
   }
 
+  async createGroup(subject: string, participants: string[] = []): Promise<string> {
+    if (!this.connected) throw new Error('WhatsApp not connected');
+    const result = await this.sock.groupCreate(subject, participants);
+    logger.info({ subject, jid: result.id }, 'WhatsApp group created');
+    return result.id;
+  }
+
   async disconnect(): Promise<void> {
     this.connected = false;
     this.sock?.end(undefined);

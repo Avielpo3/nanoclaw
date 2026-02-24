@@ -100,13 +100,13 @@ function buildVolumeMounts(
     }
   }
 
-  // Gmail credentials directory
-  const gmailDir = path.join(homeDir, '.gmail-mcp');
-  if (fs.existsSync(gmailDir)) {
+  // Gmail MCP (local project — pure JS, cross-platform safe)
+  const googleGmailMcpDir = path.join(homeDir, 'personal-writing', 'google-gmail-mcp');
+  if (fs.existsSync(googleGmailMcpDir)) {
     mounts.push({
-      hostPath: gmailDir,
-      containerPath: '/home/node/.gmail-mcp',
-      readonly: false,  // MCP may need to refresh tokens
+      hostPath: googleGmailMcpDir,
+      containerPath: '/home/node/google-gmail-mcp',
+      readonly: false,  // needs write for token refresh
     });
   }
 

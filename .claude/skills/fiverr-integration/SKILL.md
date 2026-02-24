@@ -7,6 +7,27 @@ description: Automate Fiverr gig management via browser. Create gigs, fill forms
 
 Browser automation for Fiverr via Chrome CDP (user's real session with cookies).
 
+## Fiverr Memory (IMPORTANT — read before any Fiverr task)
+
+Persistent Fiverr context lives in `groups/fiverr/` (container path: `/workspace/project/groups/fiverr/`):
+
+| File | What It Tracks | When to Read | When to Write |
+|------|---------------|--------------|---------------|
+| `account.md` | Username, seller level, profile stats | Before any Fiverr task | After visiting dashboard/profile |
+| `gigs.md` | All gigs with URLs, pricing, stats, status | Before creating/editing gigs | After any gig change or stats check |
+| `orders.md` | Order log: date, buyer, gig, amount, status | Before discussing orders | After viewing orders page |
+| `learnings.md` | DOM quirks, what works/fails, strategy notes | Before automation tasks | After discovering anything new |
+
+**Before starting any Fiverr work:**
+1. Read `groups/fiverr/account.md` — know the username and current seller level
+2. Read whichever file is relevant to the task (gigs.md for gig work, orders.md for order queries)
+3. Read `groups/fiverr/learnings.md` if doing browser automation (to avoid repeating mistakes)
+
+**After completing any Fiverr work:**
+1. Update the relevant memory files with new information
+2. If you discovered a DOM quirk or a pattern that worked/failed, add it to `learnings.md`
+3. If gig stats changed, update `gigs.md`
+
 ## Prerequisites
 
 1. **Chrome running with CDP**: `./scripts/launch-chrome.sh`
@@ -354,9 +375,17 @@ The Chrome launch script and browser-mcp server include anti-detection patches:
 
 These reduce challenge frequency but cannot eliminate it entirely.
 
-**Remediation (when challenge still appears):**
+**Auto-solver for "Press & Hold" challenge:**
+
+The browser-mcp auto-detects PerimeterX challenges after every `browser_navigate` and attempts to solve them using humanized mouse movements + long press via Playwright CDP events. This works because Playwright dispatches real browser-level mouse events, not synthetic JS events.
+
+- **Automatic**: `browser_navigate` detects and solves PX challenges. Check the response for `pxChallenge.solved`.
+- **Manual**: Use `browser_solve_px` tool if a challenge appears mid-session (e.g., after filling a form).
+- **Retries**: Up to 3 attempts with randomized hold duration (4-7s), natural mouse approach with jitter.
+
+If auto-solve fails after 3 attempts, fall back to manual:
 1. User must visit fiverr.com manually in the CDP Chrome instance
-2. Complete the challenge (usually auto-resolves or requires a click)
+2. Complete the challenge
 3. Log in manually
 4. After this, automated access works with the established session
 

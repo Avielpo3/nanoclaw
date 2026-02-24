@@ -520,6 +520,7 @@ async function main(): Promise<void> {
     syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
+    createGroup: (subject, participants) => whatsapp.createGroup(subject, participants),
   });
   startBrowserBridge();
   queue.setProcessMessagesFn(processGroupMessages);
